@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+import sys
+import copy
+
+# Global variables
+INF = sys.maxsize  # the value of infinity
+routers = []  # this array will store the routers("A", "B", "C", etc.)
+# dictionary to store the direct link, for example, graph["A"]["B"] is the distance from router A to router B
+graph = {}
+# distanceTables["A"]["B"]["C"] is the distance from router A to router C via B
+distanceTables = {}
+# shortestPath["A"]["B"][distance] is the distance from router A to router B, shortestPath["A"]["B"][via] is the next hop from router A to router B
+shortestPath = {}
+# to record the routing table, each key is a router name, each value is [dest, nextHop, distance]
+routingTables = {}
+messages = {}  # messages["A"]["B"]["C"] is the message received by router A from router B about the shortest path from B to C, the shortest length is messages["A"]["B"]["C"]["distance"], the next hop is messages["A"]["B"]["C"]["via"]
+result = ""  # save the result which needs to output
+updateEvent = False  # to record if the program should exit
+time = 0  # to record the round time
+
+# helper function to print the value in our table
+def formatVal(val):
+    if val == INF:
+        return "INF"
+    else:
+        return str(val)
+
+# add a router to the routers list
+def addRouter(router):
+    routers.append(router)
+    distanceTables[router] = {}
+    routingTables[router] = {}
+    routers.sort()
+    return
+
+# add a route to the distance vector matrix
+def addRoute(router, dest, distance):
+    if router not in graph:
+        graph[router] = {}
+    if dest not in graph:
+        graph[dest] = {}
+    graph[router][dest] = distance
+    graph[dest][router] = distance
+    return
+
+# remove a route from the distance vector matrix
+def removeRoute(router, dest):
+    del graph[router][dest]
+    del graph[dest][router]
+    return
+
+# helper function to get the neighbor routers of a router, params: router is the router name, return an array of router names
+def getNeighbors(router):
+    neighborRouters = []
+    # find all the neighbors of the router
+    for i in routers:
+        if i != router and i in graph[router]:
+            neighborRouters.append(i)
+    neighborRouters.sort()
+    return neighborRouters
+
+# helper function to get the other routers of a router, params: router is the router name, return an array of router names
+def getOtherRouter(router):
+    otherRouters = []
+    # find all the other routers
+    for i in routers:
+        if i != router:
+            otherRouters.append(i)
+    otherRouters.sort()
+    return otherRouters
+
+# function to send message to neighbors, sender is the router name, path is a dictionary like {"C": {"distance": 1, "via": "B"}} where C is the destination
+def sendMessage(messages, sender, dest, distance, via):
+    if sender == dest:
+        return
+    neighbors = getNeighbors(sender)
+    # get the receivers list
+    receivers = []
+    for neighbor in neighbors:
+        if neighbor != via:
+            receivers.append(neighbor)
+
+    for receiver in receivers:
+        if receiver not in messages:
+            messages[receiver] = {}
+        if sender not in messages[receiver]:
+            messages[receiver][sender] = {}
+        messages[receiver][sender][dest] = {"distance": distance, "via": via}
+
+# read the routers from the input and sort them by alphabetical order
+def readRouters():
+    while True:
+        line = input().strip()
+        if line == "DISTANCEVECTOR":
+            break
+        addRouter(line)
+    return
+
+# read the distance vector from the input, store the distance vector in the graph matrix, like A B 5 will be stored as graph[0][1]=5 and graph[1][0]=5
+def readGraph():
+    while True:
+        line = input().strip()
+        if line == "UPDATE" or line == "END":
+            break
+        sourceRouter, destinationRouter, distance = line.split()
+        distance = int(distance)
+        addRoute(sourceRouter, destinationRouter, distance)
+    return
+
+# function to read the update information
+def readUpdate():
+    global updateEvent
+    while True:
+        line = input().strip()
+        if line == "END":
+            break
+        sourceRouter, destinationRouter, distance = line.split()
+        updateEvent = True
+        distance = int(distance)
+
+        # add unseen routers to the routers list
+        if sourceRouter not in routers:
+            addRouter(sourceRouter)
+        if destinationRouter not in routers:
+            addRouter(destinationRouter)
+
+        # update the graph
+        if distance == -1:
+            removeRoute(sourceRouter, destinationRouter)
+        else:
+            addRoute(sourceRouter, destinationRouter, distance)
+    return
+
+# initialize the distance table for each router.
+def initializeDistanceTables():
+    for router in routers:
+        otherRouters = getOtherRouter(router)
+        distanceTables[router] = {}
+        for dest in otherRouters:
+            distanceTables[router][dest] = {}
+            for nextHop in otherRouters:
+                if dest == nextHop and dest in graph[router]:
+                    distanceTables[router][dest][nextHop] = graph[router][dest]
+                else:
+                    distanceTables[router][dest][nextHop] = INF
+
+# initialize the routing table for each router.
+def initializeRoutingTablesAndMsg():
+    for router in routers:
+        otherRouters = getOtherRouter(router)
+        routingTables[router] = {}
+        neighbours = getNeighbors(router)
+        for dest in otherRouters:
+            routingTables[router][dest] = {}
+            if dest in neighbours:
+                routingTables[router][dest]["distance"] = graph[router][dest]
+                routingTables[router][dest]["nextHop"] = dest
+            else:
+                routingTables[router][dest]["distance"] = INF
+                routingTables[router][dest]["nextHop"] = "INF"
+            sendMessage(messages, router, dest,
+                        routingTables[router][dest]["distance"], routingTables[router][dest]["nextHop"])
+
+# function to print the distance tables for all routers
+def getDistanceTablesOutput():
+    for router in routers:
+        getDistanceTable(router)
+
+# helper function to print the distance table for a router, params: router is the router name, time is the round time
+def getDistanceTable(router):
+    global result
+    result += router + " Distance Table at t=" + str(time) + "\n"
+    # print the first row
+    result += "\t"
+    otherRouters = getOtherRouter(router)
+    for instance in otherRouters:
+        result += instance + "\t"
+    result += "\n"
+
+    for dest in otherRouters:
+        result += dest + "\t"
+        for nextHop in otherRouters:
+            result += formatVal(distanceTables[router][dest][nextHop]) + "\t"
+        result += "\n"
+    result += "\n"
+
+# update the distance table for every router
+def updateDistanceTables(nextRoundMessages):
+    for router in routers:
+        updateDistanceTable(router, nextRoundMessages)
+    return
+
+# update the distance table for a router
+def updateDistanceTable(router, nextRoundMessages):
+    neighbors = getNeighbors(router)
+    otherRouters = getOtherRouter(router)
+    prevDistanceTable = copy.deepcopy(distanceTables[router])
+
+    # iterate through each cell of the distance table
+    for dest in otherRouters:
+        for nextHop in otherRouters:
+            # case that the destination is not in the distance table, this case will only appear when the router is newly added upon the update
+            if dest not in distanceTables[router]:
+                distanceTables[router][dest] = {}
+            # if nexthop is a neighbour of the given router
+            if nextHop in neighbors:
+                if nextHop == dest:
+                    distanceTables[router][dest][nextHop] = graph[router][nextHop]
+                # if the neighbour send a message to update its distance
+                elif router in messages and nextHop in messages[router] and dest in messages[router][nextHop]:
+                    distanceTables[router][dest][nextHop] = messages[router][nextHop][dest]["distance"] + \
+                        graph[router][nextHop]
+                # no messages sent, this might update if the direct link from router to nextHop is changed
+                else:
+                    if dest not in prevDistanceTable or nextHop not in prevDistanceTable[dest]:
+                        distanceTables[router][dest][nextHop] = INF
+                    elif prevDistanceTable[dest][nextHop] == INF:
+                        distanceTables[router][dest][nextHop] = INF
+                    else:
+                        distanceTables[router][dest][nextHop] = graph[router][nextHop] + \
+                            (prevDistanceTable[dest][nextHop] -
+                             prevDistanceTable[nextHop][nextHop])
+            # case the nexthop is not a neighbour of the given router
+            else:
+                if dest in prevDistanceTable and nextHop in prevDistanceTable[dest] and prevDistanceTable[dest][nextHop] != INF:
+                    sendMessage(nextRoundMessages, router, dest, INF, "INF")
+                distanceTables[router][dest][nextHop] = INF
+            # case that overflow happens
+            if distanceTables[router][dest][nextHop] < 0 or distanceTables[router][dest][nextHop] > INF:
+                distanceTables[router][dest][nextHop] = INF
+    return
+
+# function to generate the next round messages, nextRoundMessages is a dictionary containing the messages received for each router
+def generateNextRoundMessages(nextRoundMessages):
+    for router in routers:
+        generateMessageByRouter(router, nextRoundMessages)
+    return
+
+# function to generate the next round messages for a router, params: router is the router name, nextRoundMessages is a dictionary containing the messages received for each router
+def generateMessageByRouter(router, nextRoundMessages):
+    for dest in distanceTables[router]:
+        # initialize variables
+        shortestDistance = INF
+        shortestNextHop = "INF"
+        if dest not in routingTables[router]:
+            routingTables[router][dest] = {}
+            routingTables[router][dest]["distance"] = INF
+            routingTables[router][dest]["nextHop"] = "INF"
+
+        # find the shortest distance and next hop
+        for nextHop in distanceTables[router][dest]:
+            if distanceTables[router][dest][nextHop] < shortestDistance:
+                shortestDistance = distanceTables[router][dest][nextHop]
+                shortestNextHop = nextHop
+        if shortestDistance != routingTables[router][dest]["distance"] or shortestNextHop != routingTables[router][dest]["nextHop"]:
+            routingTables[router][dest]["distance"] = shortestDistance
+            routingTables[router][dest]["nextHop"] = shortestNextHop
+
+    for dest in routingTables[router]:
+        sendMessage(nextRoundMessages,
+                    router, dest, routingTables[router][dest]["distance"], routingTables[router][dest]["nextHop"])
+    return
+
+# helper function to print the messages sent by each router, used for debugging
+def printMessages(messages):
+    global result
+    for receiver in messages:
+        result += "messages received by " + receiver + ":\n"
+        for sender in messages[receiver]:
+            result += "from " + sender + ":\n"
+            for dest in messages[receiver][sender]:
+                result += "dest: " + dest + ": " + "distance: " +\
+                    str(messages[receiver][sender][dest]["distance"]) +\
+                    " via " + messages[receiver][sender][dest]["via"] + "\n"
+            result += "\n"
+    return
+
+# print routing tables for each router
+def getRoutingTablesOutput():
+    for router in routers:
+        getRoutingTableOutput(router)
+
+# helper function to print the routing table for a router, params: router is the router name
+def getRoutingTableOutput(router):
+    global result
+    result += router + " Routing Table:\n"
+    otherRouters = getOtherRouter(router)
+    for dest in otherRouters:
+        result += dest + "," + routingTables[router][dest]["nextHop"] + "," + formatVal(
+            routingTables[router][dest]["distance"]) + "\n"
+    result += "\n"
+
+# helper function to determine if there are messages
+def messageReceived():
+    for receiver in messages:
+        for sender in messages[receiver]:
+            if (len(messages[receiver][sender]) != 0):
+                return True
+    return False
+
+# dv algorithm
+def splitHorizonAlg():
+    global messages, time, updateEvent
+    while (True):
+        preDistanceTables = copy.deepcopy(distanceTables)
+        nextRoundMessages = {}
+        updateDistanceTables(nextRoundMessages)
+        generateNextRoundMessages(nextRoundMessages)
+        if (preDistanceTables == distanceTables):
+            break
+        time += 1
+        getDistanceTablesOutput()
+        messages = copy.deepcopy(nextRoundMessages)
+
+        if not messageReceived():
+            break
+
+    getRoutingTablesOutput()
+    return
+
+# initialize the variables used in the algorithm
+def initializeAlg():
+    initializeDistanceTables()
+    initializeRoutingTablesAndMsg()
+    getDistanceTablesOutput()
+
+# read the input and initialize the graph
+def readInput():
+    readRouters()
+    readGraph()
+
+# driver function to run the whole program
+def driver():
+    readInput()
+    initializeAlg()
+    splitHorizonAlg()
+    readUpdate()
+    if updateEvent:
+        splitHorizonAlg()
+    print(result)
+    return
+
+
+driver()
